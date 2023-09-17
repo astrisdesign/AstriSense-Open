@@ -4,7 +4,6 @@ Import-able class for communication and live plotting over USB serial.
 import time
 import tkinter as tk
 from tkinter import ttk
-from tkinter import filedialog
 import serial
 import pandas as pd
 from matplotlib.figure import Figure
@@ -13,20 +12,26 @@ import matplotlib.pyplot as plt
 plt.style.use('bmh')
 
 class SimpleDAQ:
-    '''
-    Contains all methods required to send/receive data over USB serial.
-    '''
     def __init__(self, mc_data_dict, update_delay_seconds=1):
+        #region Initialization
         self.log = []
         self.pressure_data = []
         self.time_data = []
         self.start_time = time.time()
         self.mc_data_dict = mc_data_dict
         self.update_delay_seconds = update_delay_seconds
-        self.port = 'COM6'
-        self.baudrate = 115200
-        self.ser = serial.Serial(self.port, self.baudrate)
         self.datafilepath, self.logfilepath = None, None
+        #endregion
+
+        #region Prompt user for COM port
+        self.root = tk.Tk()
+        self.root.withdraw()  # Hide the Tkinter root window
+        user_port_input = tk.simpledialog.askstring("Input", "Enter the COM port (e.g., 'COM6'):")
+        self.port = user_port_input
+        self.root.destroy()  # Close the Tkinter root window
+        #endregion
+
+        self.ser = serial.Serial(self.port, 115200)
         self._define_save_files()
         self._start_gui()
 
@@ -65,7 +70,7 @@ class SimpleDAQ:
         #endregion
 
     def _define_save_files(self):
-        self.datafilepath = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
+        self.datafilepath = tk.filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
         self.logfilepath = self.datafilepath.replace('.csv', '_log.txt')
         if self.datafilepath:
             self.log.append(f"Program started at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
@@ -80,6 +85,8 @@ class SimpleDAQ:
             run_duration = time.time() - self.start_time
             self.pressure_data.append(float(ser_data))
             self.time_data.append(run_duration)
+
+            #region DAQ plotting
             self.ax.clear()
             self.ax.set_title('Data Acquisition')
             self.ax.set_xlabel('Time (s)')
@@ -89,20 +96,30 @@ class SimpleDAQ:
             self.ax.grid(True, which='major', color='silver', linewidth=0.375, linestyle='-')
             self.ax.grid(True, which='minor', color='lightgrey', linewidth=0.2, linestyle='--')
             self.canvas.draw()
+            #endregion
+
+            # Update status label for connected state
+            self.status_label.config(text=f"USB Port: {self.ser.port}\nStatus: Connected", fg='green', font=("Helvetica", 12, "bold"))
+
             if run_duration % 10 < 1:
                 df = pd.DataFrame({"Time": self.time_data, "Pressure": self.pressure_data})
                 df.to_csv(self.datafilepath, index=False)
                 with open(self.logfilepath, 'w', encoding='utf8') as f:
                     for entry in self.log:
                         f.write(f"{entry}\n")
+
         except (serial.SerialException, AttributeError):
+            # Update status label for disconnected state
+            self.status_label.config(text="USB Port: Unknown\nStatus: Disconnected", fg='red', font=("Helvetica", 12, "bold"))
+
             self.log.append(f"Serial port error at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
             try:
                 self.ser.close()
-                self.ser = serial.Serial(self.port, self.baudrate)
-                self.log.append(f"Reconnected to serial port {self.port} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+                self.ser = serial.Serial(self.ser.port, 115200)
+                self.log.append(f"Reconnected to serial port {self.ser.port} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
             except (serial.SerialException, AttributeError):
                 self.log.append(f"Failed to reconnect at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+
         finally:
             self.root.after(1000*self.update_delay_seconds, self._update)
 
