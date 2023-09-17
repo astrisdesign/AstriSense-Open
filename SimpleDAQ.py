@@ -6,7 +6,6 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog
 import serial
-from serial import SerialException
 import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -32,22 +31,38 @@ class SimpleDAQ:
         self._start_gui()
 
     def _start_gui(self):
-        # Initialize Tkinter root window
+        #region Initialize Tkinter root window, paned window, control frame, buttons
         self.root = tk.Tk()
         self.root.title("Data Logging GUI")
 
-        # Matplotlib Figure
+        paned_window = tk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        paned_window.pack(fill=tk.BOTH, expand=1)
+        control_frame = tk.Frame(paned_window, width=200, height=400, bg='lightgrey')
+        control_frame.pack_propagate(False)
+        #endregion
+
+        #region Control buttons
+        ttk.Button(control_frame, text="Exit", command=self._exit_program).pack(side=tk.TOP, pady=10)
+        self.status_label = tk.Label(control_frame, text="Status: Connected", bg='lightgrey')
+        self.status_label.pack(side=tk.TOP, pady=10)
+
+        paned_window.add(control_frame)
+        #endregion
+
+        #region Matplotlib Figure
         self.fig = Figure(figsize=(6, 4), dpi=175)
         self.ax = self.fig.add_subplot(111)
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=paned_window)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
-        # Exit button
-        ttk.Button(self.root, text="Exit", command=self._exit_program).pack()
+        paned_window.add(self.canvas.get_tk_widget())
+        #endregion
 
+        #region Start Main Loop
         if self.datafilepath:
             self.root.after(self.update_delay_seconds*1000, self._update)
             self.root.mainloop()
+        #endregion
 
     def _define_save_files(self):
         self.datafilepath = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
