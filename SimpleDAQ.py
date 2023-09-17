@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog
 import serial
+from serial import SerialException
 import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -23,7 +24,9 @@ class SimpleDAQ:
         self.start_time = time.time()
         self.mc_data_dict = mc_data_dict
         self.update_delay_seconds = update_delay_seconds
-        self.ser = serial.Serial('COM6', 115200)
+        self.port = 'COM6'
+        self.baudrate = 115200
+        self.ser = serial.Serial(self.port, self.baudrate)
         self.datafilepath, self.logfilepath = None, None
         self._define_save_files()
         self._start_gui()
@@ -57,28 +60,36 @@ class SimpleDAQ:
             self.log.append(f"Data will be saved to {self.datafilepath}")
 
     def _update(self):
-        ser_data = self.ser.readline().decode('utf-8').strip()
-        run_duration = time.time() - self.start_time
-        self.pressure_data.append(float(ser_data))
-        self.time_data.append(run_duration)
-        self.ax.clear()
-        self.ax.set_title('Data Acquisition')
-        self.ax.set_xlabel('Time (s)')
-        self.ax.set_ylabel('Sensor Data')
-        self.ax.minorticks_on()
-        self.ax.plot(self.time_data, self.pressure_data)
-        self.ax.grid(True, which='major', color='silver', linewidth=0.375, linestyle='-')
-        self.ax.grid(True, which='minor', color='lightgrey', linewidth=0.2, linestyle='--')
-        self.canvas.draw()
-
-        if run_duration % 10 < 1:  # Save every 10 seconds
-            df = pd.DataFrame({"Time": self.time_data, "Pressure": self.pressure_data})
-            df.to_csv(self.datafilepath, index=False)
-            with open(self.logfilepath, 'w', encoding='utf8') as f:
-                for entry in self.log:
-                    f.write(f"{entry}\n")
-
-        self.root.after(1000*self.update_delay_seconds, self._update)
+        try:
+            ser_data = self.ser.readline().decode('utf-8').strip()
+            run_duration = time.time() - self.start_time
+            self.pressure_data.append(float(ser_data))
+            self.time_data.append(run_duration)
+            self.ax.clear()
+            self.ax.set_title('Data Acquisition')
+            self.ax.set_xlabel('Time (s)')
+            self.ax.set_ylabel('Sensor Data')
+            self.ax.minorticks_on()
+            self.ax.plot(self.time_data, self.pressure_data)
+            self.ax.grid(True, which='major', color='silver', linewidth=0.375, linestyle='-')
+            self.ax.grid(True, which='minor', color='lightgrey', linewidth=0.2, linestyle='--')
+            self.canvas.draw()
+            if run_duration % 10 < 1:
+                df = pd.DataFrame({"Time": self.time_data, "Pressure": self.pressure_data})
+                df.to_csv(self.datafilepath, index=False)
+                with open(self.logfilepath, 'w', encoding='utf8') as f:
+                    for entry in self.log:
+                        f.write(f"{entry}\n")
+        except (serial.SerialException, AttributeError):
+            self.log.append(f"Serial port error at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+            try:
+                self.ser.close()
+                self.ser = serial.Serial(self.port, self.baudrate)
+                self.log.append(f"Reconnected to serial port {self.port} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+            except (serial.SerialException, AttributeError):
+                self.log.append(f"Failed to reconnect at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+        finally:
+            self.root.after(1000*self.update_delay_seconds, self._update)
 
     def _user_input(self, inputdata):
         self.log.append(f"User input at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}: {inputdata}")
