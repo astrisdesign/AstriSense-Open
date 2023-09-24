@@ -30,9 +30,10 @@ class SimpleDAQ:
         self.lock = threading.Lock()
         self.exit_signal = threading.Event()
         self.last_save_time = 0
+        self.serial_connected = False
         #endregion
 
-        #region Prompt user for COM port
+        #region Initialize Tkinter GUI, prompt user for COM port
         self.root = tk.Tk()
         self.root.withdraw()  # Hide the Tkinter root window
         d = COM_Port_Dialogue(self.root)
@@ -92,12 +93,29 @@ class SimpleDAQ:
             self.log.append(f"Data will be saved to {self.datafilepath}")
 
     def _read_serial(self):
-        while not self.exit_signal.is_set():
-            ser_data = self.ser.readline().decode('utf-8').strip()
-            with self.lock:
-                self.serial_data_packet = ser_data
-            with open(self.rawserialpath, "a", encoding='utf8') as f:
-                f.write(f"{ser_data}\n")
+        while not self.exit_signal.is_set(): # Exit signal shuts thread down gracefully
+            # Try to read from serial port
+            try:
+                ser_data = self.ser.readline().decode('utf-8').strip()
+                if ser_data:  # Check if the data is not empty
+                    with self.lock:
+                        self.serial_data_packet = ser_data
+                        self.serial_connected = True
+                    with open(self.rawserialpath, "a", encoding='utf8') as f:
+                        f.write(f"{ser_data}\n")
+            # Fail to read from serial port
+            except (serial.SerialException, AttributeError):
+                with self.lock:
+                    self.serial_connected = False
+                # Attempt to reconnect to serial port
+                while not self.serial_connected:
+                    try:
+                        self.ser.close()
+                        self.ser = serial.Serial(self.port, self.baud_rate)
+                        with self.lock:
+                            self.serial_connected = True
+                    except (serial.SerialException, AttributeError):
+                        pass
 
     def _save_files(self):
         #Save runtime data to external text files
@@ -132,21 +150,23 @@ class SimpleDAQ:
             self.canvas.draw()
             #endregion
 
-            # Update status label for connected state
-            self.status_label.config(text=f"USB Port: {self.ser.port}\nStatus: Connected", fg='green', font=("Helvetica", 12, "bold"))
-
-            #region save runtime data to external text files
+            #region save runtime data, update status
             current_time = time.time()
-
             if current_time - self.last_save_time >= 10:
                 self._save_files()
+            
+            with self.lock:
+                if self.serial_connected:
+                    self.status_label.config(text=f"USB Port: {self.ser.port}\nStatus: Connected", fg='green', font=("Helvetica", 12, "bold"))
+                else:
+                    self.status_label.config(text="USB Port: Unknown\nStatus: Disconnected", fg='red', font=("Helvetica", 12, "bold"))
+                    self.log.append(f"Serial port error at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
             #endregion
 
-        except (serial.SerialException, AttributeError):
+        except Exception as err:
             # Update status label for disconnected state
-            self.status_label.config(text="USB Port: Unknown\nStatus: Disconnected", fg='red', font=("Helvetica", 12, "bold"))
-
-            self.log.append(f"Serial port error at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+            self.status_label.config(text="Unhandled Exception", fg='red', font=("Helvetica", 12, "bold"))
+            self.log.append(f"Unhandled error: {err}")
 
         finally:
             self.root.after(int(1000*self.update_delay_seconds), self._update)
