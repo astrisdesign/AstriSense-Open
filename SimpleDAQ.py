@@ -160,7 +160,7 @@ class SimpleDAQ:
                     self.status_label.config(text=f"USB Port: {self.ser.port}\nStatus: Connected", fg='green', font=("Helvetica", 12, "bold"))
                 else:
                     self.status_label.config(text="USB Port: Unknown\nStatus: Disconnected", fg='red', font=("Helvetica", 12, "bold"))
-                    self.log.append(f"Serial port error at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+                    self.log.append(f"Serial port disconnected at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
             #endregion
 
         except Exception as err:
