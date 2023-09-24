@@ -1,9 +1,11 @@
 '''
-Import-able class for communication and live plotting over USB serial.
+Communication and live plotting over USB serial with solutions for
+parallelism and other basic concerns.
 '''
 import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog#, simpledialog
+import threading
 import serial
 import pandas as pd
 from matplotlib.figure import Figure
@@ -23,18 +25,22 @@ class SimpleDAQ:
         self.start_time = time.time()
         self.mc_data_dict = mc_data_dict
         self.update_delay_seconds = update_delay_seconds
-        self.datafilepath, self.logfilepath = None, None
+        self.datafilepath, self.logfilepath, self.rawserialpath = None, None, None
+        self.serial_data_packet = ""
+        self.lock = threading.Lock()
+        self.exit_signal = threading.Event()
+        self.last_save_time = 0
         #endregion
 
         #region Prompt user for COM port
         self.root = tk.Tk()
         self.root.withdraw()  # Hide the Tkinter root window
-        user_port_input = tk.simpledialog.askstring("Input", "Enter the COM port (e.g., 'COM6'):")
-        self.port = user_port_input
+        d = COM_Port_Dialogue(self.root)
+        self.port, self.baud_rate = d.result
         self.root.destroy()  # Close the Tkinter root window
         #endregion
 
-        self.ser = serial.Serial(self.port, 115200)
+        self.ser = serial.Serial(self.port, self.baud_rate)
         self._define_save_files()
         self._start_gui()
 
@@ -68,13 +74,16 @@ class SimpleDAQ:
 
         #region Start Main Loop
         if self.datafilepath:
+            self.serial_thread = threading.Thread(target=self._read_serial)
+            self.serial_thread.start()
             self.root.after(int(self.update_delay_seconds*1000), self._update)
             self.root.mainloop()
         #endregion
 
     def _define_save_files(self):
-        self.datafilepath = tk.filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
+        self.datafilepath = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
         self.logfilepath = self.datafilepath.replace('.csv', '_log.txt')
+        self.rawserialpath = self.datafilepath.replace('.csv', '_raw_serial.txt')
         if self.datafilepath:
             self.log.append(f"Program started at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
             with open(self.logfilepath, 'w', encoding='utf8') as f:
@@ -82,9 +91,31 @@ class SimpleDAQ:
                     f.write(f"{entry}\n")
             self.log.append(f"Data will be saved to {self.datafilepath}")
 
+    def _read_serial(self):
+        while not self.exit_signal.is_set():
+            ser_data = self.ser.readline().decode('utf-8').strip()
+            with self.lock:
+                self.serial_data_packet = ser_data
+            with open(self.rawserialpath, "a", encoding='utf8') as f:
+                f.write(f"{ser_data}\n")
+
+    def _save_files(self):
+        #Save runtime data to external text files
+        time_seconds = time.time()
+        current_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time_seconds))
+        self.log.append(f'Saved data at {current_time}')
+        df = pd.DataFrame({"Time": self.time_data, "Pressure": self.pressure_data})
+        df.to_csv(self.datafilepath, index=False)
+        with open(self.logfilepath, 'w', encoding='utf8') as f:
+            for entry in self.log:
+                f.write(f"{entry}\n")
+        self.last_save_time = time_seconds
+
     def _update(self):
         try:
-            ser_data = self.ser.readline().decode('utf-8').strip()
+            with self.lock:
+                ser_data = self.serial_data_packet
+
             run_duration = time.time() - self.start_time
             self.pressure_data.append(float(ser_data))
             self.time_data.append(run_duration)
@@ -104,32 +135,25 @@ class SimpleDAQ:
             # Update status label for connected state
             self.status_label.config(text=f"USB Port: {self.ser.port}\nStatus: Connected", fg='green', font=("Helvetica", 12, "bold"))
 
-            if run_duration % 10 < 1:
-                df = pd.DataFrame({"Time": self.time_data, "Pressure": self.pressure_data})
-                df.to_csv(self.datafilepath, index=False)
-                with open(self.logfilepath, 'w', encoding='utf8') as f:
-                    for entry in self.log:
-                        f.write(f"{entry}\n")
+            #region save runtime data to external text files
+            current_time = time.time()
+
+            if current_time - self.last_save_time >= 10:
+                self._save_files()
+            #endregion
 
         except (serial.SerialException, AttributeError):
             # Update status label for disconnected state
             self.status_label.config(text="USB Port: Unknown\nStatus: Disconnected", fg='red', font=("Helvetica", 12, "bold"))
 
             self.log.append(f"Serial port error at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            try:
-                self.ser.close()
-                self.ser = serial.Serial(self.ser.port, 115200)
-                self.log.append(f"Reconnected to serial port {self.ser.port} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-            except (serial.SerialException, AttributeError):
-                self.log.append(f"Failed to reconnect at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
 
         finally:
             self.root.after(int(1000*self.update_delay_seconds), self._update)
 
-    def _user_input(self, inputdata):
-        self.log.append(f"User input at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}: {inputdata}")
-
     def _exit_program(self):
+        self.exit_signal.set()
+        self.serial_thread.join()
         self.log.append(f"Program exited at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}")
         with open(self.logfilepath, 'w', encoding='utf8') as f:
             for entry in self.log:
@@ -137,6 +161,25 @@ class SimpleDAQ:
         self.ser.close()
         self.root.quit()
         self.root.destroy()
+
+
+#region custom Tkinter objects
+class COM_Port_Dialogue(tk.simpledialog.Dialog):
+    # User prompt for com port (string) and baud rate (int)
+    def body(self, master):
+        tk.Label(master, text="COM port:").grid(row=0)
+        tk.Label(master, text="Baud rate:").grid(row=1)
+        self.e1 = tk.Entry(master)
+        self.e2 = tk.Entry(master)
+        self.e1.insert(0, "COM6")  # default value
+        self.e2.insert(0, "115200")  # default value
+        self.e1.grid(row=0, column=1)
+        self.e2.grid(row=1, column=1)
+        return self.e1
+
+    def apply(self):
+        self.result = (self.e1.get(), int(self.e2.get()))
+#endregion
 
 if __name__ == '__main__':
     sdaq = SimpleDAQ({}, 1/4)
