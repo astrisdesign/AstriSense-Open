@@ -12,6 +12,9 @@ import matplotlib.pyplot as plt
 plt.style.use('bmh')
 
 class SimpleDAQ:
+    '''
+    Tkinter-based data acquisition and embedded system communication.
+    '''
     def __init__(self, mc_data_dict, update_delay_seconds=1):
         #region Initialization
         self.log = []
@@ -65,7 +68,7 @@ class SimpleDAQ:
 
         #region Start Main Loop
         if self.datafilepath:
-            self.root.after(self.update_delay_seconds*1000, self._update)
+            self.root.after(int(self.update_delay_seconds*1000), self._update)
             self.root.mainloop()
         #endregion
 
@@ -121,7 +124,7 @@ class SimpleDAQ:
                 self.log.append(f"Failed to reconnect at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
 
         finally:
-            self.root.after(1000*self.update_delay_seconds, self._update)
+            self.root.after(int(1000*self.update_delay_seconds), self._update)
 
     def _user_input(self, inputdata):
         self.log.append(f"User input at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}: {inputdata}")
@@ -136,4 +139,4 @@ class SimpleDAQ:
         self.root.destroy()
 
 if __name__ == '__main__':
-    sdaq = SimpleDAQ({},1)
+    sdaq = SimpleDAQ({}, 1/4)
