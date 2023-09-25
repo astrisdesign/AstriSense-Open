@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog#, simpledialog
 import threading
 import serial
+import ast
 import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -17,10 +18,9 @@ class SimpleDAQ:
     '''
     Tkinter-based data acquisition and embedded system communication.
     '''
-    def __init__(self, mc_data_dict, update_delay_seconds=1):
+    def __init__(self, mc_data_dict, update_delay_seconds=1, graph_title='Data Aq', graph_ylabel='Sensor Data'):
         #region Initialization
         self.log = []
-        self.pressure_data = []
         self.time_data = []
         self.start_time = time.time()
         self.mc_data_dict = mc_data_dict
@@ -31,6 +31,9 @@ class SimpleDAQ:
         self.exit_signal = threading.Event()
         self.last_save_time = 0
         self.serial_connected = False
+        self.data_channels = [[] for k in mc_data_dict.keys()]
+        self.graph_title = graph_title
+        self.graph_ylabel = graph_ylabel
         #endregion
 
         #region Initialize Tkinter GUI, prompt user for COM port
@@ -117,12 +120,27 @@ class SimpleDAQ:
                     except (serial.SerialException, AttributeError):
                         pass
 
+    def _parse_serial_data(self, serial_data, delimiter="~~~"):
+        # Parse the standard serial data encoding for Astris embedded system programs.
+        try:
+            dict_part, str_part = serial_data.split(delimiter, 1 )# Split the serial data using the delimiter
+            parsed_dict = ast.literal_eval(dict_part) # Evaluate the dictionary part using ast.literal_eval
+            parsed_dict = {int(k):float(v) for k,v in parsed_dict.items()} # Cast to expected types
+            return parsed_dict, str_part # Return the string part and the parsed dictionary
+        except (ValueError, SyntaxError):
+            return None, None
+
     def _save_files(self):
         #Save runtime data to external text files
         time_seconds = time.time()
         current_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time_seconds))
         self.log.append(f'Saved data at {current_time}')
-        df = pd.DataFrame({"Time": self.time_data, "Pressure": self.pressure_data})
+
+        data = {'Time':self.time_data}
+        for k,v in self.mc_data_dict.items():
+            data[v] = self.data_channels[k]
+        df = pd.DataFrame(data)
+
         df.to_csv(self.datafilepath, index=False)
         with open(self.logfilepath, 'w', encoding='utf8') as f:
             for entry in self.log:
@@ -134,24 +152,30 @@ class SimpleDAQ:
             with self.lock:
                 ser_data = self.serial_data_packet
 
+            ser_data, ser_log = self._parse_serial_data(ser_data) # SAFELY CONVERT SERIAL DATA PACKET TO DICT HERE
+            for k in self.mc_data_dict.keys():
+                self.data_channels[k].append(ser_data[k])
+
             run_duration = time.time() - self.start_time
-            self.pressure_data.append(float(ser_data))
             self.time_data.append(run_duration)
 
             #region DAQ plotting
             self.ax.clear()
-            self.ax.set_title('Data Acquisition')
+            self.ax.set_title(self.graph_title)
             self.ax.set_xlabel('Time (s)')
-            self.ax.set_ylabel('Sensor Data')
+            self.ax.set_ylabel(self.graph_ylabel)
             self.ax.minorticks_on()
-            self.ax.plot(self.time_data, self.pressure_data)
+            for k in self.mc_data_dict.keys():
+                self.ax.plot(self.time_data, self.data_channels[k], label=self.mc_data_dict[k])
             self.ax.grid(True, which='major', color='silver', linewidth=0.375, linestyle='-')
             self.ax.grid(True, which='minor', color='lightgrey', linewidth=0.2, linestyle='--')
+            self.fig.legend()
             self.canvas.draw()
             #endregion
 
             #region save runtime data, update status
             current_time = time.time()
+            stringtime = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
             if current_time - self.last_save_time >= 10:
                 self._save_files()
             
@@ -160,7 +184,10 @@ class SimpleDAQ:
                     self.status_label.config(text=f"USB Port: {self.ser.port}\nStatus: Connected", fg='green', font=("Helvetica", 12, "bold"))
                 else:
                     self.status_label.config(text="USB Port: Unknown\nStatus: Disconnected", fg='red', font=("Helvetica", 12, "bold"))
-                    self.log.append(f"Serial port disconnected at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+                    self.log.append(f"Serial port disconnected at {stringtime}")
+            if ser_log:
+                self.log.append(f"{ser_log} - {stringtime}")
+
             #endregion
 
         except Exception as err:
@@ -202,4 +229,4 @@ class COM_Port_Dialogue(tk.simpledialog.Dialog):
 #endregion
 
 if __name__ == '__main__':
-    sdaq = SimpleDAQ({}, 1/4)
+    sdaq = SimpleDAQ({0:'Pressure'}, 1/4)
