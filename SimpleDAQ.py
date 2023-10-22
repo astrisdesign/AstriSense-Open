@@ -188,6 +188,7 @@ class SimpleDAQ:
                 err = abs(esp32_setpoints[k]/v-1)
                 if err > self.setpoint_check_precision:
                     matching_setpoints = False
+                    self.log.append(f'Setpoint mismatch detected at {stringtime}: {k}:{v} in SimpleDAQ vs {k}:{esp32_setpoints[k]} on ESP32')
                     break
 
             if not matching_setpoints:
@@ -195,7 +196,7 @@ class SimpleDAQ:
                     if self.serial_connected:
                         setpoint_json = json.dumps(self.setpoints).encode('utf-8') + b'\n'
                         self.ser.write(setpoint_json)
-                        print(setpoint_json) # TODO delete debugging line
+                        self.log.append(f'Passed new setpoints at {stringtime}: {str(setpoint_json).strip()}')
             #endregion
 
             #region ESP32 serial connection status
@@ -244,5 +245,5 @@ class COM_Port_Dialogue(simpledialog.Dialog):
         self.result = (self.e1.get(), int(self.e2.get()))
 
 if __name__ == '__main__':
-    setpoint_dict = {'Pressure': 11.7, 'Temperature': 25.0}
+    setpoint_dict = {'Pressure': 11.7}
     sdaq = SimpleDAQ({0: 'Pressure'}, setpoint_dict=setpoint_dict, update_delay_seconds=1/4)
