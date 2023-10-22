@@ -17,7 +17,7 @@ plt.style.use('bmh')
 
 class SimpleDAQ:
     '''Class implementing serial communication, Tkinter GUI, data processing, and data storage.'''
-    def __init__(self, mc_data_dict, setpoint_dict=None, update_delay_seconds=1, graph_title='', graph_ylabel='Sensor Data'):
+    def __init__(self, mc_data_dict, setpoint_dict=None, update_delay_seconds=1, graph_title='', graph_ylabel='Sensor Data', setpoint_check_precision=.001):
         self.log = []
         self.time_data = []
         self.start_time = time.time()
@@ -33,6 +33,7 @@ class SimpleDAQ:
         self.graph_title = graph_title
         self.graph_ylabel = graph_ylabel
         self.setpoints = setpoint_dict
+        self.setpoint_check_precision = setpoint_check_precision
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -122,12 +123,13 @@ class SimpleDAQ:
 
     def _parse_serial_data(self, serial_data, delimiter="~~~"):
         try:
-            dict_part, str_part = serial_data.split(delimiter, 1)
-            parsed_dict = ast.literal_eval(dict_part)
-            parsed_dict = {int(k):float(v) for k,v in parsed_dict.items()}
-            return parsed_dict, str_part
+            data, setpoints, log = serial_data.split(delimiter, 2)
+            parsed_data = ast.literal_eval(data)
+            parsed_data = {int(k):float(v) for k,v in parsed_data.items()}
+            parsed_setpoints = ast.literal_eval(setpoints)
+            return parsed_data, parsed_setpoints, log
         except (ValueError, SyntaxError):
-            return None, None
+            return None, None, None
 
     def _save_files(self):
         time_seconds = time.time()
@@ -149,14 +151,15 @@ class SimpleDAQ:
         try:
             with self.lock:
                 ser_data = self.serial_data_packet
+            ser_data, esp32_setpoints, ser_log = self._parse_serial_data(ser_data)
 
-            ser_data, ser_log = self._parse_serial_data(ser_data)
             for k in self.mc_data_dict.keys():
                 self.data_channels[k].append(ser_data[k])
 
             run_duration = time.time() - self.start_time
             self.time_data.append(run_duration)
 
+            #region Plotting
             self.ax.clear()
             self.ax.set_title(self.graph_title)
             self.ax.set_xlabel('Time (s)')
@@ -168,6 +171,7 @@ class SimpleDAQ:
             self.ax.grid(True, which='minor', color='lightgrey', linewidth=0.2, linestyle='--')
             self.fig.legend()
             self.canvas.draw()
+            #endregion
 
             current_time = time.time()
             stringtime = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
@@ -178,14 +182,23 @@ class SimpleDAQ:
                 for name, entry in self.setpoint_entries.items():
                     self.setpoints[name] = float(entry.get())
 
-            # Write setpoints to ESP32
-            with self.lock:
-                if self.serial_connected:
-                    setpoint_json = json.dumps(self.setpoints).encode('utf-8') + b'\n'
-                    self.ser.write(setpoint_json)
-                    print(setpoint_json) # TODO delete debugging line
+            #region ESP32 setpoint check (resend if mismatched)
+            matching_setpoints = True
+            for k,v in self.setpoints.items():
+                err = abs(esp32_setpoints[k]/v-1)
+                if err > self.setpoint_check_precision:
+                    matching_setpoints = False
+                    break
 
-            # Read status from ESP32
+            if not matching_setpoints:
+                with self.lock:
+                    if self.serial_connected:
+                        setpoint_json = json.dumps(self.setpoints).encode('utf-8') + b'\n'
+                        self.ser.write(setpoint_json)
+                        print(setpoint_json) # TODO delete debugging line
+            #endregion
+
+            #region ESP32 serial connection status
             with self.lock:
                 if self.serial_connected:
                     self.status_label.config(text=f"USB Port: {self.ser.port}\nStatus: Connected", fg='green', font=("Helvetica", 12, "bold"))
@@ -194,6 +207,7 @@ class SimpleDAQ:
                     self.log.append(f"Serial port disconnected at {stringtime}")
             if ser_log:
                 self.log.append(f"{ser_log} - {stringtime}")
+            #endregion
 
         except Exception as err:
             self.status_label.config(text="Unhandled Exception", fg='red', font=("Helvetica", 12, "bold"))
@@ -231,4 +245,4 @@ class COM_Port_Dialogue(simpledialog.Dialog):
 
 if __name__ == '__main__':
     setpoint_dict = {'Pressure': 11.7, 'Temperature': 25.0}
-    sdaq = SimpleDAQ({0: 'Pressure'}, setpoint_dict=setpoint_dict, update_delay_seconds=1/4)#
+    sdaq = SimpleDAQ({0: 'Pressure'}, setpoint_dict=setpoint_dict, update_delay_seconds=1/4)
