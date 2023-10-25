@@ -32,6 +32,7 @@ class SimpleDAQ:
         self.data_channels = [[] for k in mc_data_dict.keys()]
         self.graph_title = graph_title
         self.graph_ylabel = graph_ylabel
+        self.window_size = 200  # Default window "size" (number of observations) for the graph
         self.setpoints = setpoint_dict
         self.setpoint_check_precision = setpoint_check_precision
 
@@ -57,6 +58,15 @@ class SimpleDAQ:
         ttk.Button(control_frame, text="Exit", command=self._exit_program).pack(side=tk.TOP, pady=10)
         self.status_label = tk.Label(control_frame, text="Status: Connected", bg='lightgrey')
         self.status_label.pack(side=tk.TOP, pady=10)
+
+        # Create a frame for window size label and entry
+        window_size_frame = tk.Frame(control_frame)
+        window_size_frame.pack(side=tk.TOP, padx=10, pady=10)
+        self.window_size_label = tk.Label(window_size_frame, text="Window Size:")
+        self.window_size_label.grid(row=0, column=0)
+        self.window_size_entry = tk.Entry(window_size_frame)
+        self.window_size_entry.insert(0, str(self.window_size))
+        self.window_size_entry.grid(row=0, column=1)
 
         paned_window.add(control_frame)
 
@@ -160,16 +170,23 @@ class SimpleDAQ:
             self.time_data.append(run_duration)
 
             #region Plotting
+            try:
+                self.window_size = int(self.window_size_entry.get())
+            except ValueError:
+                self.window_size = 200  # Default to 200 if invalid input
+            start_idx = max(0, len(self.time_data) - self.window_size)
+
             self.ax.clear()
             self.ax.set_title(self.graph_title)
             self.ax.set_xlabel('Time (s)')
             self.ax.set_ylabel(self.graph_ylabel)
             self.ax.minorticks_on()
             for k in self.mc_data_dict.keys():
-                self.ax.plot(self.time_data, self.data_channels[k], label=self.mc_data_dict[k])
+                self.ax.plot(self.time_data[start_idx:], self.data_channels[k][start_idx:],
+                                     label=self.mc_data_dict[k])
             self.ax.grid(True, which='major', color='silver', linewidth=0.375, linestyle='-')
             self.ax.grid(True, which='minor', color='lightgrey', linewidth=0.2, linestyle='--')
-            self.fig.legend()
+            self.ax.legend(fontsize='small')
             self.canvas.draw()
             #endregion
 
@@ -180,12 +197,21 @@ class SimpleDAQ:
 
             if self.setpoints:
                 for name, entry in self.setpoint_entries.items():
-                    self.setpoints[name] = float(entry.get())
+                    try:
+                        self.setpoints[name] = float(entry.get())
+                    except ValueError:
+                        pass
 
             #region ESP32 setpoint check (resend if mismatched)
             matching_setpoints = True
             for k,v in self.setpoints.items():
-                err = abs(esp32_setpoints[k]/v-1)
+                if isinstance(v, str):
+                    err = 0 # ignore string inputs
+                elif v > .000001:
+                    err = abs(esp32_setpoints[k]/v-1)
+                else:
+                    err = abs(esp32_setpoints[k]-v) # switch to absolute error for very low values (e.g. zero)
+
                 if err > self.setpoint_check_precision:
                     matching_setpoints = False
                     self.log.append(f'Setpoint mismatch detected at {stringtime}: {k}:{v} in SimpleDAQ vs {k}:{esp32_setpoints[k]} on ESP32')
@@ -245,5 +271,5 @@ class COM_Port_Dialogue(simpledialog.Dialog):
         self.result = (self.e1.get(), int(self.e2.get()))
 
 if __name__ == '__main__':
-    setpoint_dict = {'Pressure': 3}
+    setpoint_dict = {'Pressure': 0}
     sdaq = SimpleDAQ({0: 'Pressure'}, setpoint_dict=setpoint_dict, update_delay_seconds=1/4)
