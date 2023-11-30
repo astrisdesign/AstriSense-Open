@@ -271,5 +271,5 @@ class COM_Port_Dialogue(simpledialog.Dialog):
         self.result = (self.e1.get(), int(self.e2.get()))
 
 if __name__ == '__main__':
-    setpoint_dict = {'Pressure': 0}
+    setpoint_dict = {'Pressure': -1}
     sdaq = SimpleDAQ({0: 'Pressure'}, setpoint_dict=setpoint_dict, update_delay_seconds=1/4)
