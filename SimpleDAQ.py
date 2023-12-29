@@ -79,7 +79,7 @@ class SimpleDAQ:
             self.setpoint_entries = {}
             for name, value in self.setpoints.items():
                 frame = tk.Frame(setpoint_frame)
-                frame.pack(side=tk.TOP, padx=5, pady=5)
+                frame.pack(side=tk.TOP, padx=5, pady=5, fill=tk.X, expand=True)
                 tk.Label(frame, text=name).pack(side=tk.LEFT)
                 entry = tk.Entry(frame)
                 entry.insert(0, str(value))
@@ -100,7 +100,7 @@ class SimpleDAQ:
             self.serial_thread.start()
             self.root.after(int(self.update_delay_seconds*1000), self._update)
             self.root.mainloop()
-
+    
     def create_toggle_buttons(self, toggle_keys):
         """
         Creates toggle buttons for specified setpoints.
@@ -112,11 +112,18 @@ class SimpleDAQ:
                 entry = self.setpoint_entries.pop(key)
                 entry.pack_forget()  # Remove the existing entry widget
 
-                # Create a toggle button
-                button_text = ''
-                toggle_button = tk.Button(entry.master, text=button_text, bg='darkgrey', command=lambda k=key: self.toggle_setpoint(k))
-                toggle_button.pack(side=tk.RIGHT)
-                self.setpoint_entries[key] = {'button': toggle_button, 'value': 0}  # Store button and value separately
+                # Determine toggle button state (text and color)
+                initial_value = self.setpoints.get(key, 0)
+                if initial_value == 1:
+                    button_text, button_color = 'ON', '#00FF00'
+                elif initial_value == 0:
+                    button_text, button_color = 'OFF', 'darkgrey'
+                else:
+                    raise ValueError('Toggle setpoints must have initial values of 0 (off) or 1 (on).')
+
+                toggle_button = tk.Button(entry.master, text=button_text, bg=button_color, command=lambda k=key: self.toggle_setpoint(k))
+                toggle_button.pack(side=tk.RIGHT, anchor='e')
+                self.setpoint_entries[key] = {'button': toggle_button, 'value': initial_value}  # Store button and value separately
 
     def toggle_setpoint(self, key):
         """
