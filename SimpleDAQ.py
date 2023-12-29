@@ -37,6 +37,7 @@ class SimpleDAQ:
         self.setpoint_check_precision = setpoint_check_precision
         self.default_COM_port = 'COM6'
         self.default_baud_rate = 115200
+        self.toggle_keys = None
 
     def start_gui(self):
         self.root = tk.Tk()
@@ -84,6 +85,8 @@ class SimpleDAQ:
                 entry.insert(0, str(value))
                 entry.pack(side=tk.RIGHT)
                 self.setpoint_entries[name] = entry
+        if self.toggle_keys:
+            self.create_toggle_buttons(self.toggle_keys)
 
         self.fig = Figure(figsize=(6, 4), dpi=175)
         self.ax = self.fig.add_subplot(111)
@@ -97,6 +100,36 @@ class SimpleDAQ:
             self.serial_thread.start()
             self.root.after(int(self.update_delay_seconds*1000), self._update)
             self.root.mainloop()
+
+    def create_toggle_buttons(self, toggle_keys):
+        """
+        Creates toggle buttons for specified setpoints.
+        Args:
+            toggle_keys (list): Keys of the setpoints to be converted into toggle buttons.
+        """
+        for key in toggle_keys:
+            if key in self.setpoint_entries:
+                entry = self.setpoint_entries.pop(key)
+                entry.pack_forget()  # Remove the existing entry widget
+
+                # Create a toggle button
+                button_text = ''
+                toggle_button = tk.Button(entry.master, text=button_text, bg='darkgrey', command=lambda k=key: self.toggle_setpoint(k))
+                toggle_button.pack(side=tk.RIGHT)
+                self.setpoint_entries[key] = {'button': toggle_button, 'value': 0}  # Store button and value separately
+
+    def toggle_setpoint(self, key):
+        """
+        Toggles the setpoint value and updates the button appearance.
+        Args:
+            key (str): The key of the setpoint to toggle.
+        """
+        self.setpoint_entries[key]['value'] = 1 - self.setpoint_entries[key]['value']  # Toggle between 0 and 1
+        button = self.setpoint_entries[key]['button']
+        if self.setpoint_entries[key]['value']:
+            button.config(bg='#00FF00', text='ON')  # Green background and 'ON' if value = 1
+        else:
+            button.config(bg='darkgrey', text='OFF')  # Grey background and 'OFF' if value = 0
 
     def _define_save_files(self):
         self.datafilepath = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
@@ -204,6 +237,8 @@ class SimpleDAQ:
                 for name, entry in self.setpoint_entries.items():
                     try:
                         self.setpoints[name] = float(entry.get())
+                    except TypeError: # Toggle buttons don't have .get
+                        self.setpoints[name] = entry['value']
                     except ValueError:
                         pass
 
