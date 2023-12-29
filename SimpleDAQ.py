@@ -35,18 +35,18 @@ class SimpleDAQ:
         self.window_size = 200  # Default window "size" (number of observations) for the graph
         self.setpoints = setpoint_dict
         self.setpoint_check_precision = setpoint_check_precision
+        self.default_COM_port = 'COM6'
+        self.default_baud_rate = 115200
 
+    def start_gui(self):
         self.root = tk.Tk()
         self.root.withdraw()
-        d = COM_Port_Dialogue(self.root)
+        d = COM_Port_Dialogue(self.root, self.default_COM_port, self.default_baud_rate)
         self.port, self.baud_rate = d.result
         self.root.destroy()
-
         self.ser = serial.Serial(self.port, self.baud_rate)
         self._define_save_files()
-        self._start_gui()
 
-    def _start_gui(self):
         self.root = tk.Tk()
         self.root.title("Data Logging GUI")
 
@@ -138,8 +138,13 @@ class SimpleDAQ:
             parsed_data = {int(k):float(v) for k,v in parsed_data.items()}
             parsed_setpoints = ast.literal_eval(setpoints)
             return parsed_data, parsed_setpoints, log
-        except (ValueError, SyntaxError):
-            return None, None, None
+        except ValueError as ve:
+            error_text = f'ValueError: {ve}'
+        except SyntaxError as se:
+            error_text = f'ValueError: {se}'
+        except Exception as e:
+            error_text = f'Unexpected Error: {e}'
+            return None, None, error_text
 
     def _save_files(self):
         time_seconds = time.time()
@@ -238,7 +243,7 @@ class SimpleDAQ:
 
         except Exception as err:
             self.status_label.config(text="Unhandled Exception", fg='red', font=("Helvetica", 12, "bold"))
-            self.log.append(f"Unhandled error: {err}")
+            self.log.append(f"Unhandled error: {err}. Serial log: {str(ser_log)}")
 
         finally:
             self.root.after(int(1000*self.update_delay_seconds), self._update)
@@ -256,13 +261,18 @@ class SimpleDAQ:
 
 class COM_Port_Dialogue(simpledialog.Dialog):
     '''Prompts user to specify COM port and baud rate.'''
+    def __init__(self, master, default_COM_port="COM6", default_baud_rate="115200"):
+        self.default_COM_port = default_COM_port
+        self.default_baud_rate = default_baud_rate
+        super().__init__(master)
+
     def body(self, master):
         tk.Label(master, text="COM port:").grid(row=0)
         tk.Label(master, text="Baud rate:").grid(row=1)
         self.e1 = tk.Entry(master)
         self.e2 = tk.Entry(master)
-        self.e1.insert(0, "COM6")
-        self.e2.insert(0, "115200")
+        self.e1.insert(0, self.default_COM_port)
+        self.e2.insert(0, str(self.default_baud_rate))
         self.e1.grid(row=0, column=1)
         self.e2.grid(row=1, column=1)
         return self.e1
