@@ -17,7 +17,7 @@ plt.style.use('bmh')
 
 class SimpleDAQ:
     '''Class implementing serial communication, Tkinter GUI, data processing, and data storage.'''
-    def __init__(self, mc_data_dict, setpoint_dict=None, update_delay_seconds=1, graph_title='', graph_ylabel='Sensor Data', setpoint_check_precision=.001):
+    def __init__(self, mc_data_dict, setpoint_dict=None, update_delay_seconds=1, graph_title='', graph_ylabel='Sensor Data', setpoint_decimals=3, setpoint_check_precision=.001):
         self.log = []
         self.time_data = []
         self.start_time = time.time()
@@ -34,10 +34,16 @@ class SimpleDAQ:
         self.graph_ylabel = graph_ylabel
         self.window_size = 200  # Default window "size" (number of observations) for the graph
         self.setpoints = setpoint_dict
+        self.setpoint_decimals = setpoint_decimals
         self.setpoint_check_precision = setpoint_check_precision
         self.default_COM_port = 'COM6'
         self.default_baud_rate = 115200
         self.toggle_keys = None
+        if setpoint_dict:
+            self._setpoint_mapping = {k: i for i, k in enumerate(setpoint_dict.keys())}
+        else:
+            self._setpoint_mapping = {}
+            self.setpoints = {}
 
     def start_gui(self):
         self.root = tk.Tk()
@@ -175,16 +181,20 @@ class SimpleDAQ:
         try:
             data, setpoints, log = serial_data.split(delimiter, 2)
             parsed_data = ast.literal_eval(data)
-            parsed_data = {int(k):float(v) for k,v in parsed_data.items()}
+            parsed_data = {int(k): float(v) for k, v in parsed_data.items()}
             parsed_setpoints = ast.literal_eval(setpoints)
             return parsed_data, parsed_setpoints, log
-        except ValueError as ve:
-            error_text = f'ValueError: {ve}'
-        except SyntaxError as se:
-            error_text = f'ValueError: {se}'
+
         except Exception as e:
             error_text = f'Unexpected Error: {e}'
             return None, None, error_text
+
+    def _send_setpoints(self):
+        # Translate setpoint names to their integer mappings
+        integer_setpoints = {self._setpoint_mapping[k]: v for k, v in self.setpoints.items()}
+        setpoint_json = json.dumps(integer_setpoints).encode('utf-8') + b'\n'
+        self.ser.write(setpoint_json)
+        return setpoint_json  # Return the JSON string for logging
 
     def _save_files(self):
         time_seconds = time.time()
@@ -202,12 +212,13 @@ class SimpleDAQ:
                 f.write(f"{entry}\n")
         self.last_save_time = time_seconds
 
-    def _update(self):
+    def _update(self): # NEW
         try:
             with self.lock:
                 ser_data = self.serial_data_packet
             ser_data, esp32_setpoints, ser_log = self._parse_serial_data(ser_data)
 
+            # Process the serial data
             for k in self.mc_data_dict.keys():
                 self.data_channels[k].append(ser_data[k])
 
@@ -227,8 +238,7 @@ class SimpleDAQ:
             self.ax.set_ylabel(self.graph_ylabel)
             self.ax.minorticks_on()
             for k in self.mc_data_dict.keys():
-                self.ax.plot(self.time_data[start_idx:], self.data_channels[k][start_idx:],
-                                     label=self.mc_data_dict[k])
+                self.ax.plot(self.time_data[start_idx:], self.data_channels[k][start_idx:], label=self.mc_data_dict[k])
             self.ax.grid(True, which='major', color='silver', linewidth=0.375, linestyle='-')
             self.ax.grid(True, which='minor', color='lightgrey', linewidth=0.2, linestyle='--')
             self.ax.legend(fontsize='small')
@@ -240,10 +250,11 @@ class SimpleDAQ:
             if current_time - self.last_save_time >= 10:
                 self._save_files()
 
+            # Update setpoints from the GUI entries
             if self.setpoints:
                 for name, entry in self.setpoint_entries.items():
                     try:
-                        self.setpoints[name] = float(entry.get())
+                        self.setpoints[name] = round(float(entry.get()), self.setpoint_decimals)
                     except TypeError: # Toggle buttons don't have .get
                         self.setpoints[name] = entry['value']
                     except ValueError:
@@ -251,24 +262,28 @@ class SimpleDAQ:
 
             #region ESP32 setpoint check (resend if mismatched)
             matching_setpoints = True
-            for k,v in self.setpoints.items():
+            for k, v in self.setpoints.items():
+                mapped_index = self._setpoint_mapping[k]
+                esp32_value = esp32_setpoints[str(mapped_index)]
+                if esp32_value is None:
+                    continue
+
                 if isinstance(v, str):
-                    err = 0 # ignore string inputs
+                    err = 0  # Ignore string inputs
                 elif v > .000001:
-                    err = abs(esp32_setpoints[k]/v-1)
+                    err = abs(esp32_value / v - 1)
                 else:
-                    err = abs(esp32_setpoints[k]-v) # switch to absolute error for very low values (e.g. zero)
+                    err = abs(esp32_value - v)  # Use absolute error for very low values
 
                 if err > self.setpoint_check_precision:
                     matching_setpoints = False
-                    self.log.append(f'Setpoint mismatch detected at {stringtime}: {k}:{v} in SimpleDAQ vs {k}:{esp32_setpoints[k]} on ESP32')
+                    self.log.append(f'Setpoint mismatch detected at {stringtime}: {k} [{self._setpoint_mapping[k]}]:{v} in SimpleDAQ vs {mapped_index}:{esp32_value} on ESP32')
                     break
 
             if not matching_setpoints:
                 with self.lock:
                     if self.serial_connected:
-                        setpoint_json = json.dumps(self.setpoints).encode('utf-8') + b'\n'
-                        self.ser.write(setpoint_json)
+                        setpoint_json = self._send_setpoints()  # Send setpoints over USB serial and capture the JSON
                         self.log.append(f'Passed new setpoints at {stringtime}: {str(setpoint_json).strip()}')
             #endregion
 
